@@ -1,0 +1,132 @@
+# Yugabyte Node Rehydration Runbook
+
+## Overview
+
+This runbook describes the process of rehydrating a Yugabyte node by replacing its boot disk and reprovisioning the node agent.
+
+## Prerequisites
+
+1. Access to GCP project
+2. Access to Yugabyte Anywhere instance
+3. Required tools installed:
+   - Google Cloud SDK
+   - Yugabyte Anywhere CLI
+   - Python 3.6+
+
+## Process Steps
+
+### 1. Preparation
+
+1. Verify access to GCP project and zone
+2. Ensure YBA CLI is properly configured
+3. Verify node is accessible via SSH
+4. Take note of current node status in YBA
+
+### 2. Stop Yugabyte Processes
+
+1. Use YBA CLI to stop the node:
+   ```bash
+   yba universe node stop -H <yba-host> -a <api-token> --name <universe> --node-name <node-name>
+   ```
+2. Verify node is stopped in YBA UI
+
+### 3. Stop GCP Instance
+
+1. Stop the instance:
+   ```bash
+   gcloud compute instances stop <instance-name> --zone <zone> --project <project>
+   ```
+2. Wait for instance to reach TERMINATED state
+
+### 4. Replace Boot Disk
+
+1. Create new boot disk:
+   ```bash
+   gcloud compute disks create <new-disk> --image <image> --image-project <project> --size <size> --type <type> --zone <zone>
+   ```
+2. Detach old boot disk
+3. Attach new boot disk as boot device
+
+### 5. Start Instance
+
+1. Start the instance:
+   ```bash
+   gcloud compute instances start <instance-name> --zone <zone> --project <project>
+   ```
+2. Wait for instance to reach RUNNING state
+3. Wait for SSH access (configurable wait time)
+
+### 6. Mount Data Disk
+
+1. Identify data disk UUID
+2. Create /data directory
+3. Mount data disk
+4. Update /etc/fstab for persistence
+
+### 7. Provision Node Agent
+
+1. Clean up existing yugabyte user
+2. Create new yugabyte user with correct home directory
+3. Set proper permissions
+4. Run node-agent-provision.sh
+
+### 8. Start Node
+
+1. Use YBA CLI to reprovision the node
+2. Start the node
+3. Verify node status in YBA UI
+
+## Verification Steps
+
+1. Check node status in YBA UI
+2. Verify data disk is mounted
+3. Verify yugabyte user home directory
+4. Check node agent status
+5. Verify node is part of the universe
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Node fails to start in YBA**
+   - Check node agent logs
+   - Verify SSH access
+   - Check user permissions
+
+2. **Data disk not mounting**
+   - Verify disk UUID
+   - Check /etc/fstab
+   - Verify mount permissions
+
+3. **SSH access issues**
+   - Check instance status
+   - Verify firewall rules
+   - Check SSH key configuration
+
+### Recovery Steps
+
+1. If process fails during boot disk replacement:
+   - Detach new disk
+   - Reattach old disk
+   - Start instance
+
+2. If node agent provisioning fails:
+   - Check logs
+   - Manually run node-agent-provision.sh
+   - Verify user setup
+
+## Rollback Procedure
+
+1. Stop the node in YBA
+2. Stop the instance
+3. Detach new boot disk
+4. Reattach original boot disk
+5. Start instance
+6. Start node in YBA
+
+## Maintenance
+
+1. Regular testing of the script
+2. Update configuration as needed
+3. Monitor log files
+4. Keep YBA CLI updated
