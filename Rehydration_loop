@@ -1,0 +1,124 @@
+# Script has been updated to iterate sequentially over all nodes listed in yba_config.yaml under node_list, preserving their order. Each node is processed one at a time in the order specified in the config.
+
+#!/usr/bin/env python3
+import subprocess
+import logging
+import time
+import json
+import yaml
+from datetime import datetime
+
+# Load configuration
+def load_config():
+    with open("yba_config.yaml", "r") as f:
+        return yaml.safe_load(f)
+
+# Run command with logging
+def run(cmd, capture_output=False):
+    logging.info(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, text=True, capture_output=capture_output, check=True)
+    return result.stdout.strip() if capture_output else None
+
+# Resolve instance name and zone from internal IP
+def resolve_instance_name_and_zone(ip, project):
+    result = run([
+        "gcloud", "compute", "instances", "list",
+        "--filter", f"networkInterfaces.networkIP={ip}",
+        "--format", "json",
+        "--project", project
+    ], capture_output=True)
+    data = json.loads(result)
+    if not data:
+        raise RuntimeError(f"No instance found for IP {ip}")
+    return data[0]["name"], data[0]["zone"].split("/")[-1]
+
+# Main logic
+if __name__ == "__main__":
+    config = load_config()
+    node_list = config["yba"]["node_list"]
+
+    project = config["project_id"]
+    new_image = config["new_image"]
+    image_project = config["image_project"]
+    disk_type = config["disk_type"]
+    disk_size = str(config["disk_size"]) + "GB"
+    ssh_user = config["sh_user"]
+    wait_time = config["ssh_wait_time"]
+    yba_cli = config["yba"]["yba_cli_path"]
+    yba_host = config["yba"]["yba_host"]
+    yba_token = config["yba"]["yba_api_token"]
+    yba_universe = config["yba"]["universe_name"]
+
+    log_file = f"rehydration_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(), logging.FileHandler(log_file)]
+    )
+
+    for node in node_list:
+        instance_ip = list(node.keys())[0]
+        node_name = list(node.values())[0]
+        logging.info(f"\n🔄 Starting rehydration for node: {node_name} with IP: {instance_ip}")
+
+        instance_name, zone = resolve_instance_name_and_zone(instance_ip, project)
+
+        run(["gcloud", "compute", "instances", "stop", instance_name, "--zone", zone, "--project", project])
+        time.sleep(10)
+
+        result = run([
+            "gcloud", "compute", "instances", "describe", instance_name,
+            "--zone", zone, "--project", project, "--format", "json"
+        ], capture_output=True)
+        boot_disk = [d["source"].split("/")[-1] for d in json.loads(result)["disks"] if d.get("boot")][0]
+
+        new_disk = f"{instance_name}-boot-{int(time.time())}"
+        run([
+            "gcloud", "compute", "disks", "create", new_disk,
+            "--image", new_image, "--image-project", image_project,
+            "--size", disk_size, "--type", disk_type,
+            "--zone", zone, "--project", project
+        ])
+
+        run(["gcloud", "compute", "instances", "detach-disk", instance_name, "--disk", boot_disk, "--zone", zone, "--project", project])
+        run(["gcloud", "compute", "instances", "attach-disk", instance_name, "--disk", new_disk, "--zone", zone, "--project", project, "--boot"])
+
+        run(["gcloud", "compute", "instances", "start", instance_name, "--zone", zone, "--project", project])
+        time.sleep(wait_time)
+
+        cmd = (
+            "sudo mkdir -p /data && "
+            "for uuid in $(lsblk -f | grep xfs | grep -v sda | awk '{print $3}'); do "
+            "sudo mount UUID=$uuid /data && "
+            "sudo chmod 777 /data && "
+            "sudo sh -c 'grep -q UUID=$uuid /etc/fstab || echo \"UUID=$uuid /data xfs defaults,nofail 0 2\" >> /etc/fstab'; "
+            "done"
+        )
+        run([
+            "gcloud", "compute", "ssh", f"{ssh_user}@{instance_name}",
+            "--zone", zone, "--project", project, "--internal-ip",
+            "--command", cmd,
+            "--", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"
+        ])
+
+        cmd = " && ".join([
+            "sudo pkill -u yugabyte || true",
+            "sudo useradd -m -d /data/home/yugabyte -s /bin/bash yugabyte",
+            "sudo mkdir -p /data/home/yugabyte",
+            "sudo chown -R yugabyte:yugabyte /data/home/yugabyte",
+            "sudo chmod 755 /data/home/yugabyte",
+            "cd /data/2024.2.2.2-b2/scripts",
+            "sudo ./node-agent-provision.sh"
+        ])
+        run([
+            "gcloud", "compute", "ssh", f"{ssh_user}@{instance_name}",
+            "--zone", zone, "--project", project, "--internal-ip",
+            "--command", cmd,
+            "--", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"
+        ])
+
+        run([yba_cli, "universe", "node", "reprovision", "-H", yba_host, "-a", yba_token, "--name", yba_universe, "--node-name", node_name])
+        time.sleep(10)
+        run([yba_cli, "universe", "node", "start", "-H", yba_host, "-a", yba_token, "--name", yba_universe, "--node-name", node_name])
+
+        logging.info(f"✅ Rehydration complete for node {node_name}.")
