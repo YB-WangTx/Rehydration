@@ -12,6 +12,16 @@ This repository contains a script for rehydrating Yugabyte nodes by replacing bo
 - Comprehensive logging
 - Error handling and verification steps
 
+## The script will:
+- Process nodes sequentially
+- Stop on the first failure
+- Generate detailed logs in rehydration_<timestamp>.log
+- Create a summary in rehydration_summary_<timestamp>.txt
+- If any issues occur, the script will:
+- Log detailed error messages
+- Clean up any resources
+- Generate a summary of what succeeded and what failed
+
 ## Prerequisites
 
 - Python 3.6+
