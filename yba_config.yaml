@@ -1,4 +1,4 @@
-project_id: "project" 
+project_id: "yuga-rjw"
 instance_type: "n2-standard-4"
 zone: "us-central1-a"
 image_family: "rhel-8"
@@ -8,14 +8,19 @@ extra_disk_size: 250
 new_disk_name: "new-boot-disk"
 new_image: "rhel-9-v20240415"
 disk_type: "pd-balanced"
-sh_user: "sh_user"  # or whatever user you use
+sh_user: "weiwang"  # or whatever user you use
 ssh_wait_time: 30     # seconds to wait for SSH to be available
 
 yba:
-  yba_host: "https://xx.xxx.xx.xxx/"
-  customer_id: "customer_id"
-  yba_api_token: "api_token"
-  universe_name: "universe_name"
+  yba_host: "https://35.184.240.7/"
+  customer_id: "cf6d0b42-bae0-49f2-8fa1-28a3f9216a77"
+  yba_api_token: "3.a53f0440-db9b-400a-8c13-e850717adca7.d704d3b3-bcfc-4347-a0e2-50a14e0e89eb"
+  universe_name: "TU"
   node_list:
-    - "10.128.15.xxx": "yb-dev-TU1-n4"
+    - ip: "10.128.15.231"
+      yba_node_name: "yb-dev-TU-n1"  # YBA node name
+    - ip: "10.128.0.2"
+      yba_node_name: "yb-dev-TU-n2"  # YBA node name
+    - ip: "10.128.0.3"
+      yba_node_name: "yb-dev-TU-n3"  # YBA node name
   yba_cli_path: "/opt/yugabyte/software/active/yb-platform/yugaware/yba-cli/yba_cli-2024.2.2.2-b2-linux-amd64/yba"
