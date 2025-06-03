@@ -1,4 +1,4 @@
-# Yugabyte Rehydration Procedure
+# Yugabyte Database Node Rehydration Procedure on GCP
 
 This script automates the process of rehydrating Yugabyte nodes in a Google Cloud Platform (GCP) environment. It handles the complete workflow of stopping nodes, replacing boot disks, remounting data disks, and reprovisioning node agents.
 
