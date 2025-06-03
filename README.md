@@ -1,6 +1,6 @@
 # Yugabyte Rehydration Procedure
 
-This repository contains a script for rehydrating Yugabyte nodes by replacing boot disks and reprovisioning node agents.
+This repository contains scripts and configuration file for rehydrating Yugabyte nodes by replacing boot disks and reprovisioning node agents.
 
 ## Features
 
