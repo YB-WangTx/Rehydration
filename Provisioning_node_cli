@@ -1,4 +1,4 @@
-## YNP Porcess
+## YNP Process
 
 sudo lsblk
 sudo file -s /dev/sdb
