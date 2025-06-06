@@ -126,12 +126,11 @@ The script generates two files:
 3. Ensure you have sufficient permissions in GCP and YBA
 4. Monitor the logs during execution
 5. Review the summary after completion
-6. Notes: With Terraformed managed infrastructure, once you use this script to rehydrate nodes by replacing the boot disk, the infrastructure (specifically the GCE instances) is no longer in the same state as what Terraform originally provisioned.
-# What Breaks or Becomes Risky:
+## Notes: With Terraformed managed infrastructure, once you use this script to rehydrate nodes by replacing the boot disk, the infrastructure (specifically the GCE instances) is no longer in the same state as what Terraform originally provisioned.
+What Breaks or Becomes Risky:
 Terraform will detect drift:
 Since the boot disk has been replaced outside of Terraform, a future terraform plan or apply may try to "correct" it, i.e., recreate the instance using the old AMI.
 This is especially true if boot_disk.image is tracked in Terraform.
-
 Drifted state:
 The Terraform state file no longer matches reality. The disk resource (google_compute_disk) that was replaced is now stale in the .tfstate file.
 Terraform taint or ignore_changes may be needed:
@@ -139,7 +138,7 @@ You’d have to use something like:
 lifecycle {
   ignore_changes = [boot_disk]
 }
-# Recommendations:
+## Recommendations:
 Given this boot disk rehydration process is part of a lifecycle (e.g., every 45 days), it’s best to treat these nodes as semi-managed by Terraform.
 
 Consider separating your Terraform stack
