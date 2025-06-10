@@ -2,6 +2,18 @@
 
 This script automates the process of rehydrating Yugabyte nodes in a Google Cloud Platform (GCP) environment. It handles the complete workflow of stopping nodes, replacing boot disks, remounting data disks, and reprovisioning node agents.
 
+## Table of Contents
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Output](#output)
+- [Error Handling](#error-handling)
+- [Best Practices](#best-practices)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
+
 ## Prerequisites
 
 - Python 3.6 or higher
@@ -60,6 +72,7 @@ yba:
 
 ### Configuration Parameters
 
+#### GCP Configuration
 - `project_id`: Your GCP project ID
 - `instance_type`: GCP instance type
 - `zone`: GCP zone where instances are located
@@ -72,28 +85,30 @@ yba:
 - `disk_type`: GCP disk type (e.g., pd-balanced)
 - `sh_user`: SSH user for instance access
 - `ssh_wait_time`: Seconds to wait for SSH availability
-- `yba`: Yugabyte Platform configuration
-  - `yba_host`: YBA host URL
-  - `customer_id`: YBA customer ID
-  - `yba_api_token`: YBA API token
-  - `universe_name`: Name of the Yugabyte universe
-  - `node_list`: List of nodes to process
-    - `ip`: Node IP address
-    - `yba_node_name`: Node name in YBA
-  - `yba_cli_path`: Path to YBA CLI executable
+
+#### YBA Configuration
+- `yba_host`: YBA host URL
+- `customer_id`: YBA customer ID
+- `yba_api_token`: YBA API token
+- `universe_name`: Name of the Yugabyte universe
+- `node_list`: List of nodes to process
+  - `ip`: Node IP address
+  - `yba_node_name`: Node name in YBA
+- `yba_cli_path`: Path to YBA CLI executable
 
 ## Usage
 
 1. Make the script executable:
 ```bash
-chmod +x rehydration.py
+chmod +x rehydration_Cluster.py
 ```
 
 2. Run the script:
 ```bash
-./rehydration.py
+./rehydration_Cluster.py
 ```
 
+### Process Flow
 The script will:
 1. Process each node in the configuration sequentially
 2. Stop Yugabyte processes
@@ -105,12 +120,16 @@ The script will:
 ## Output
 
 The script generates two files:
-1. `rehydration_<timestamp>.log`: Detailed log of the rehydration process
-2. `rehydration_summary_<timestamp>.txt`: Summary of the rehydration process, including:
-   - Total nodes processed
-   - Success/failure counts
-   - Detailed status for each node
-   - Any errors encountered
+
+### Log File
+- `rehydration_<timestamp>.log`: Detailed log of the rehydration process
+
+### Summary File
+- `rehydration_summary_<timestamp>.txt`: Summary of the rehydration process, including:
+  - Total nodes processed
+  - Success/failure counts
+  - Detailed status for each node
+  - Any errors encountered
 
 ## Error Handling
 
@@ -121,45 +140,59 @@ The script generates two files:
 
 ## Best Practices
 
+### General Best Practices
 1. Always backup your configuration before running the script
 2. Test the script in a non-production environment first
 3. Ensure you have sufficient permissions in GCP and YBA
 4. Monitor the logs during execution
 5. Review the summary after completion
-6. Managing Terraformed managed infrastructure: Notes: With Terraformed managed infrastructure, once you use this script to rehydrate nodes by replacing the boot disk, the infrastructure (specifically the GCE instances) is no longer in the same state as what Terraform originally provisioned.
-#### What Breaks or Becomes Risky:
-	Terraform will detect drift:
-	Since the boot disk has been replaced outside of Terraform, a future terraform plan or apply may try to "correct" it, i.e., recreate the instance using the old AMI.
-	This is especially true if boot_disk.image is tracked in Terraform.
-	Drifted state:
-	The Terraform state file no longer matches reality. The disk resource (google_compute_disk) that was replaced is now stale in the .tfstate file.
-	Terraform taint or ignore_changes may be needed:
-	You’d have to use something like:
-	lifecycle {
- 	 ignore_changes = [boot_disk]
-	}
-##### Recommendations:
-Given this boot disk rehydration process is part of a lifecycle (e.g., every 45 days), it’s best to treat these nodes as semi-managed by Terraform.
 
-Consider separating your Terraform stack
-- Core infra (VPC, IAM, etc.): fully Terraform-managed.
-- Ephemeral compute resources (like these YugabyteDB nodes): provisioned once, then maintained with scripts like this.
+### Terraform Integration Considerations
+When using this script with Terraform-managed infrastructure:
 
-7. Tracking root disk source image lineage 
-GCP tracks lineage poorly and doesn’t expose the exact source image name directly in the disk metadata post-creation, but there is recommended workaround: 
-a. Log/record the source image of the original boot disk before replacement.
-This can be done by capturing the licenses or sourceImage (if present) from the instance metadata.
-b. Label the new disk with the image name when creating it — for easier tracking later.
-c. An example to label it:
+#### What Breaks or Becomes Risky
+- **Terraform Drift Detection**: 
+  - Boot disk replacement outside Terraform will be detected as drift
+  - Future `terraform plan` or `apply` may attempt to recreate instances with old AMI
+  - Particularly critical if `boot_disk.image` is tracked in Terraform
+
+- **State Management**:
+  - Terraform state file becomes out of sync with actual infrastructure
+  - Disk resource (`google_compute_disk`) in `.tfstate` becomes stale
+
+#### Recommendations
+1. **Semi-Managed Approach**:
+   - Treat nodes as semi-managed by Terraform
+   - Consider separating Terraform stacks:
+     - Core infrastructure (VPC, IAM, etc.): fully Terraform-managed
+     - Ephemeral compute resources: provisioned once, maintained with scripts
+
+2. **State Management**:
+   ```hcl
+   lifecycle {
+     ignore_changes = [boot_disk]
+   }
    ```
-       run([
-        "gcloud", "compute", "disks", "create", new_disk,
-        "--image", NEW_IMAGE, "--image-project", IMAGE_PROJECT,
-        "--size", DISK_SIZE, "--type", DISK_TYPE,
-        "--zone", zone, "--project", PROJECT,
-        "--labels", f"created_by=rehydration,new_image={NEW_IMAGE.replace('/', '-')}"
-    ])
-  ```
+
+### Image Lineage Tracking
+GCP's limited lineage tracking requires manual management:
+
+1. **Pre-Replacement**:
+   - Log/record original boot disk source image
+   - Capture licenses or sourceImage from instance metadata
+
+2. **During Replacement**:
+   - Label new disk with image name for tracking
+   ```bash
+   gcloud compute disks create [DISK_NAME] \
+     --image [NEW_IMAGE] \
+     --image-project [IMAGE_PROJECT] \
+     --size [DISK_SIZE] \
+     --type [DISK_TYPE] \
+     --zone [ZONE] \
+     --project [PROJECT] \
+     --labels "created_by=rehydration,new_image=[NEW_IMAGE]"
+   ```
 
 ## Contributing
 
