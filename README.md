@@ -145,6 +145,18 @@ Consider separating your Terraform stack
 - Core infra (VPC, IAM, etc.): fully Terraform-managed.
 - Ephemeral compute resources (like these YugabyteDB nodes): provisioned once, then maintained with scripts like this.
 
+## Tracking root disk source image lineage 
+GCP tracks lineage poorly and doesn’t expose the exact source image name directly in the disk metadata post-creation, but there is recommended workaround: 
+1. Log/record the source image of the original boot disk before replacement.
+This can be done by capturing the licenses or sourceImage (if present) from the instance metadata.
+2. Label the new disk with the image name when creating it — for easier tracking later.
+       run([
+        "gcloud", "compute", "disks", "create", new_disk,
+        "--image", NEW_IMAGE, "--image-project", IMAGE_PROJECT,
+        "--size", DISK_SIZE, "--type", DISK_TYPE,
+        "--zone", zone, "--project", PROJECT,
+        "--labels", f"created_by=rehydration,new_image={NEW_IMAGE.replace('/', '-')}"
+    ])
 
 ## Contributing
 
