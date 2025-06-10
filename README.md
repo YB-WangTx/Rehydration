@@ -150,6 +150,8 @@ GCP tracks lineage poorly and doesn’t expose the exact source image name direc
 1. Log/record the source image of the original boot disk before replacement.
 This can be done by capturing the licenses or sourceImage (if present) from the instance metadata.
 2. Label the new disk with the image name when creating it — for easier tracking later.
+3. An example to label it:
+   ```
        run([
         "gcloud", "compute", "disks", "create", new_disk,
         "--image", NEW_IMAGE, "--image-project", IMAGE_PROJECT,
@@ -157,7 +159,7 @@ This can be done by capturing the licenses or sourceImage (if present) from the 
         "--zone", zone, "--project", PROJECT,
         "--labels", f"created_by=rehydration,new_image={NEW_IMAGE.replace('/', '-')}"
     ])
-
+```
 ## Contributing
 
 1. Fork the repository
