@@ -11,8 +11,7 @@ from datetime import datetime
 with open("yba_config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-# Global configuration
-ZONE = config["zone"]
+# Global configuration (zone is now per-node)
 PROJECT = config["project_id"]
 NEW_IMAGE = config["new_image"]
 IMAGE_PROJECT = config["image_project"]
@@ -32,6 +31,43 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(), logging.FileHandler(log_file)]
 )
+
+def validate_config(config):
+    """Validate the configuration file."""
+    required_fields = [
+        "project_id", "new_image", "image_project", 
+        "disk_type", "disk_size", "sh_user", "ssh_wait_time"
+    ]
+    
+    yba_required_fields = [
+        "yba_host", "customer_id", "yba_api_token", 
+        "universe_name", "node_list", "yba_cli_path"
+    ]
+    
+    # Check top-level fields
+    for field in required_fields:
+        if field not in config:
+            raise ValueError(f"Missing required field: {field}")
+    
+    # Check YBA section
+    if "yba" not in config:
+        raise ValueError("Missing 'yba' section")
+    
+    for field in yba_required_fields:
+        if field not in config["yba"]:
+            raise ValueError(f"Missing required YBA field: {field}")
+    
+    # Check node_list
+    if not config["yba"]["node_list"]:
+        raise ValueError("node_list cannot be empty")
+    
+    for i, node in enumerate(config["yba"]["node_list"]):
+        required_node_fields = ["ip", "yba_node_name", "zone"]
+        for field in required_node_fields:
+            if field not in node:
+                raise ValueError(f"Node {i} missing required field: {field}")
+    
+    logging.info("✅ Configuration validation passed")
 
 def run(cmd, capture_output=False):
     """Run a shell command and return its output."""
@@ -63,7 +99,9 @@ def stop_yugabyte_processes(node_name):
         ])
         logging.info(f"✅ Stopped node {node_name} using YBA CLI")
     except subprocess.CalledProcessError as e:
-        logging.warning(f"⚠️ Failed to stop node using YBA CLI: {e}")
+        error_msg = f"❌ Failed to stop node {node_name} using YBA CLI: {e}"
+        logging.error(error_msg)
+        raise RuntimeError(error_msg)  # This will cause the script to exit
 
 def reprovision_and_start_node(node_name):
     """Reprovision and start the node."""
@@ -116,36 +154,103 @@ def start_instance(instance_name, zone):
     wait_for_status(instance_name, zone, "RUNNING")
 
 def replace_boot_disk(instance_name, zone):
-    """Replace the boot disk with a new one."""
+    """Replace the boot disk with a new one, or attach if it already exists."""
     old_disk = get_boot_disk(instance_name, zone)
-    new_disk = f"{instance_name}-boot-{int(time.time())}"
-    run([
-        "gcloud", "compute", "disks", "create", new_disk,
-        "--image", NEW_IMAGE, "--image-project", IMAGE_PROJECT,
-        "--size", DISK_SIZE, "--type", DISK_TYPE,
-        "--zone", zone, "--project", PROJECT
-    ])
+    new_disk = f"{instance_name}-boot"  # Simplified naming without timestamp
+
+    # Try to create the new disk
+    try:
+        run([
+            "gcloud", "compute", "disks", "create", new_disk,
+            "--image", NEW_IMAGE, "--image-project", IMAGE_PROJECT,
+            "--size", DISK_SIZE, "--type", DISK_TYPE,
+            "--zone", zone, "--project", PROJECT
+        ])
+        logging.info(f"✅ Created new disk {new_disk}")
+    except subprocess.CalledProcessError as e:
+        if "already exists" in str(e):
+            logging.warning(f"⚠️ Disk {new_disk} already exists, will attempt to attach it.")
+        else:
+            logging.error(f"❌ Failed to create disk {new_disk}: {e}")
+            raise
+
+    # Detach the old boot disk
     run([
         "gcloud", "compute", "instances", "detach-disk", instance_name,
         "--disk", old_disk, "--zone", zone, "--project", PROJECT
     ])
+
+    # Attach the new (or existing) boot disk
     run([
         "gcloud", "compute", "instances", "attach-disk", instance_name,
         "--disk", new_disk, "--zone", zone, "--project", PROJECT,
         "--boot"
     ])
 
+def parse_size_to_gb(size_str):
+    """Convert size string (e.g., '400G', '1T') to GB."""
+    size_str = size_str.upper()
+    if 'T' in size_str:
+        return float(size_str.replace('T', '')) * 1024
+    elif 'G' in size_str:
+        return float(size_str.replace('G', ''))
+    elif 'M' in size_str:
+        return float(size_str.replace('M', '')) / 1024
+    else:
+        return float(size_str) / (1024 * 1024 * 1024)  # Assume bytes
+
 def get_data_disk_uuid(instance_name, zone):
-    """Get the UUID of the data disk."""
-    cmd = [
-        "gcloud", "compute", "ssh", f"{SSH_USER}@{instance_name}",
-        "--zone", zone, "--project", PROJECT,
-        "--internal-ip", "--command",
-        "lsblk -o NAME,FSTYPE,UUID | grep xfs | grep -v sda"
+    """
+    Return (device_path, uuid) for the XFS partition that is *not* the one
+    mounted at '/' (works even when /data isn’t mounted yet).  No jq needed.
+    """
+    remote_cmd = (
+        # plain JSON; no jq
+        "lsblk -b -J -o NAME,MOUNTPOINT,FSTYPE,UUID,SIZE,TYPE"
+    )
+
+    raw_json = run(
+        [
+            "gcloud", "compute", "ssh", f"{SSH_USER}@{instance_name}",
+            "--zone", zone, "--project", PROJECT,
+            "--internal-ip", "--command", remote_cmd
+        ],
+        capture_output=True
+    )
+
+    blk = json.loads(raw_json)          # whole lsblk tree
+    root_devs  = set()
+    candidates = []                     # (size, path, uuid)
+
+    # walk disks and any children (partitions)
+    for disk in blk["blockdevices"]:
+        stack = [disk] + disk.get("children", [])
+        for n in stack:
+            name = n["name"]
+            mp   = (n.get("mountpoint") or "").strip()
+            fs   = n.get("fstype")
+            uuid = n.get("uuid")
+            size = int(n.get("size") or 0)
+
+            if mp == "/":
+                root_devs.add(name.split("p")[0])  # base disk name
+            elif fs == "xfs" and uuid:
+                candidates.append((size, f"/dev/{name}", uuid))
+
+    # keep only those not on the root disk
+    data_disks = [
+        (s, p, u)
+        for s, p, u in candidates
+        if p.split('/')[-1].split('p')[0] not in root_devs
     ]
-    output = run(cmd, capture_output=True)
-    device, _, uuid = output.strip().split()
-    return f"/dev/{device}", uuid
+
+    if not data_disks:
+        raise RuntimeError("No XFS data disk found (root excluded)")
+
+    # choose largest; adjust if you want a different policy
+    data_disks.sort(reverse=True)
+    _, device_path, disk_uuid = data_disks[0]
+    return device_path, disk_uuid
 
 def mount_data_disk(instance_name, zone, uuid):
     """Mount the data disk."""
@@ -164,7 +269,7 @@ def mount_data_disk(instance_name, zone, uuid):
 def provision_node_agent(instance_name, zone):
     """Provision the node agent."""
     cmd = " && ".join([
-        "echo '🛠 Reprovisioning yugabyte user and running node-agent-provision.sh...'",
+        "echo '�� Reprovisioning yugabyte user and running node-agent-provision.sh...'",
         "sudo pkill -u yugabyte || true",
         "id yugabyte && sudo userdel -r yugabyte || true",
         "getent group yugabyte && (getent passwd | awk -F: '$4 == \"$(getent group yugabyte | cut -d: -f3)\"' | grep -q . || sudo groupdel yugabyte) || true",
@@ -214,17 +319,24 @@ Status: {status}
 
 def main():
     """Main function to process all nodes."""
+    # Validate configuration first
+    validate_config(config)
+    
     processed_nodes = []
     
     for node_info in config["yba"]["node_list"]:
         INSTANCE_IP = node_info['ip']
         NODE_NAME = node_info['yba_node_name']
+        ZONE = node_info['zone']  # Read zone from node configuration
         
         try:
-            INSTANCE_NAME, ZONE = resolve_instance_name_and_zone(INSTANCE_IP)
-            logging.info(f"Processing node {NODE_NAME} (IP: {INSTANCE_IP})")
+            INSTANCE_NAME, _ = resolve_instance_name_and_zone(INSTANCE_IP)  # We'll use the zone from config
+            logging.info(f"Processing node {NODE_NAME} (IP: {INSTANCE_IP}, Zone: {ZONE})")
             
+            # Stop Yugabyte processes - this will exit if it fails
             stop_yugabyte_processes(NODE_NAME)
+            
+            # Only proceed if Yugabyte processes were stopped successfully
             stop_instance(INSTANCE_NAME, ZONE)
             replace_boot_disk(INSTANCE_NAME, ZONE)
             start_instance(INSTANCE_NAME, ZONE)
@@ -254,7 +366,7 @@ def main():
                 'success': False,
                 'error': error_msg
             })
-            # Exit on first failure
+            # Exit on first failure (including Yugabyte stop failure)
             break
         
         # Add delay between nodes
