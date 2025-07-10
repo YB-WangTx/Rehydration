@@ -201,6 +201,9 @@ def parse_size_to_gb(size_str):
     else:
         return float(size_str) / (1024 * 1024 * 1024)  # Assume bytes
 
+# This makes the routine indifferent to whether the kernel calls that disk sda, sdb, nvme0n1, etc.
+# Collect all XFS partitions with a UUID whose device isn’t on the same disk as root. If several remain (e.g., extra data disks), choose the largest one.
+
 def get_data_disk_uuid(instance_name, zone):
     """
     Return (device_path, uuid) for the XFS partition that is *not* the one
