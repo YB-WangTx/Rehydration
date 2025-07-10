@@ -1,6 +1,5 @@
 project_id: "yuga-xxx"
 instance_type: "n2-standard-4"
-zone: "us-central1-a"
 image_family: "rhel-8"
 image_project: "rhel-cloud"
 disk_size: 150
