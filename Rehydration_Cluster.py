@@ -156,7 +156,9 @@ def start_instance(instance_name, zone):
 def replace_boot_disk(instance_name, zone):
     """Replace the boot disk with a new one, or attach if it already exists."""
     old_disk = get_boot_disk(instance_name, zone)
-    new_disk = f"{instance_name}-boot"  # Simplified naming without timestamp
+    # 👉 append the current month-day stamp
+    date_stamp = datetime.now().strftime("%m%d")        # e.g., 0710 for July 10
+    new_disk   = f"{instance_name}-boot-{date_stamp}"
 
     # Try to create the new disk
     try:
