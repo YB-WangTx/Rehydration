@@ -290,6 +290,38 @@ def provision_node_agent(instance_name, zone):
         "--zone", zone, "--project", PROJECT,
         "--internal-ip", "--command", cmd
     ])
+/*
+def provision_node_agent(instance_name, zone):
+    """Provision the node agent with explicit UID/GID, home, and mount logic."""
+    cmd = " && ".join([
+        # Mount /dev/sdb to /mnt/d0 if not already mounted
+        "sudo mkdir -p /mnt/d0",
+        "mountpoint -q /mnt/d0 || sudo mount /dev/sdb /mnt/d0",
+        # Create group yugabyte with GID 3005 if not exists
+        "getent group yugabyte || sudo groupadd -g 3005 yugabyte",
+        # Create user yugabyte with UID 3004, GID 3005, home /mnt/d0/yugabyte, shell /bin/bash if not exists
+        "id yugabyte || sudo useradd -u 3004 -g 3005 -d /mnt/d0/yugabyte -m -s /bin/bash yugabyte",
+        # If user exists, ensure correct home and group
+        "id yugabyte && sudo usermod -d /mnt/d0/yugabyte -g 3005 yugabyte",
+        "sudo mkdir -p /mnt/d0/yugabyte",
+        "sudo chown -R yugabyte:yugabyte /mnt/d0/yugabyte",
+        "sudo chmod 755 /mnt/d0/yugabyte",
+        # Add yugabyte to systemd-journal group
+        "sudo usermod -aG systemd-journal yugabyte",
+        # Optional: verify
+        "id yugabyte",
+        "getent group yugabyte",
+        "ls -ld /mnt/d0/yugabyte"
+        # You can add your node-agent-provision.sh call here if needed
+        # "cd /data/2024.2.2.2-b2/scripts",
+        # "sudo ./node-agent-provision.sh"
+    ])
+    run([
+        "gcloud", "compute", "ssh", f"{SSH_USER}@{instance_name}",
+        "--zone", zone, "--project", PROJECT,
+        "--internal-ip", "--command", cmd
+    ])
+*/
 
 def generate_summary(processed_nodes):
     """Generate a summary of the rehydration process."""
