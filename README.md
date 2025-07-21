@@ -21,6 +21,7 @@ This script automates the process of rehydrating Yugabyte nodes in a Google Clou
 - Yugabyte Platform (YBA) CLI installed
 - Access to GCP project with appropriate permissions
 - Access to Yugabyte Platform with API token
+- ssh user who has required privileges.
 
 ## Installation
 
