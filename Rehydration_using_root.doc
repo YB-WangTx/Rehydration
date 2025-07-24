@@ -1,27 +1,27 @@
-## Key Changes:
+# Key Changes:
 
-	ROOT_PUBLIC_KEY global variable: You'll need to define this in your yba_config.yaml. This should be the public key part of a new SSH key pair dedicated to root access on these VMs. For example, if you generate a key with ssh-keygen -t rsa -b 4096 -f ~/.ssh/gce_root_key -C "gce-root-access", you would put the content of ~/.ssh/gce_root_key.pub into this variable. Keep the private key (~/.ssh/gce_root_key) highly secure as it grants root access.
+##	ROOT_PUBLIC_KEY global variable: You'll need to define this in your yba_config.yaml. This should be the public key part of a new SSH key pair dedicated to root access on these VMs. For example, if you generate a key with ssh-keygen -t rsa -b 4096 -f ~/.ssh/gce_root_key -C "gce-root-access", you would put the content of ~/.ssh/gce_root_key.pub into this variable. Keep the private key (~/.ssh/gce_root_key) highly secure as it grants root access.
 
-	set_root_ssh_key_via_cloud_init function: This new function is responsible for setting the user-data metadata with the Cloud-init configuration that injects the ROOT_PUBLIC_KEY into /root/.ssh/authorized_keys.
+##	set_root_ssh_key_via_cloud_init function: This new function is responsible for setting the user-data metadata with the Cloud-init configuration that injects the ROOT_PUBLIC_KEY into /root/.ssh/authorized_keys.
 
-	provision_node_agent_via_ssh_as_root (NEW function): The provision_node_agent function is renamed to explicitly indicate it runs as root. It now uses root@ in the gcloud compute ssh command, and the sudo prefix is removed from the commands within the remote string, as they will already be executed as root.
+##	provision_node_agent_via_ssh_as_root (NEW function): The provision_node_agent function is renamed to explicitly indicate it runs as root. It now uses root@ in the gcloud compute ssh command, and the sudo prefix is removed from the commands within the remote string, as they will already be executed as root.
 
-## main function logic:
+# main function logic:
 
-	After start_instance (which brings up the new boot disk), it now calls set_root_ssh_key_via_cloud_init to apply the root SSH key.
+##	After start_instance (which brings up the new boot disk), it now calls set_root_ssh_key_via_cloud_init to apply the root SSH key.
 
-	It then calls a wait_for_root_ssh_ready helper (NEW) which will poll for SSH connectivity specifically to root@instance_name.
+##	It then calls a wait_for_root_ssh_ready helper (NEW) which will poll for SSH connectivity specifically to root@instance_name.
 
-	Finally, it calls provision_node_agent_via_ssh_as_root.
+##	Finally, it calls provision_node_agent_via_ssh_as_root.
 
-## Important Considerations for you to perform/verify:
+# Important Considerations for you to perform/verify:
 
-	yba_config.yaml update: Add root_public_key: "ssh-rsa AAAA..." to your config file.
+##	yba_config.yaml update: Add root_public_key: "ssh-rsa AAAA..." to your config file.
 
-	SSH Key Management: Understand the security implications of having a dedicated root SSH key and manage its private key securely.
+##	SSH Key Management: Understand the security implications of having a dedicated root SSH key and manage its private key securely.
 
-	gcloud Authentication: Ensure your local gcloud environment is configured to use the private key corresponding to the ROOT_PUBLIC_KEY you inject. You might need to add it to your SSH agent (ssh-add ~/.ssh/gce_root_key).
+##	gcloud Authentication: Ensure your local gcloud environment is configured to use the private key corresponding to the ROOT_PUBLIC_KEY you inject. You might need to add it to your SSH agent (ssh-add ~/.ssh/gce_root_key).
 
-	Image Compatibility: Verify your NEW_IMAGE has Cloud-init installed and enabled by default (most GCE standard images do).
+##	Image Compatibility: Verify your NEW_IMAGE has Cloud-init installed and enabled by default (most GCE standard images do).
 
-	Timing: Cloud-init runs very early, so SSH should be available quickly. The wait_for_root_ssh_ready will poll until successful.
+##	Timing: Cloud-init runs very early, so SSH should be available quickly. The wait_for_root_ssh_ready will poll until successful.
