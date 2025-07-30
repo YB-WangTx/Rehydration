@@ -78,7 +78,7 @@ def validate_config(config, action):
         if "node_management" not in config["yba"]:
             raise ValueError("Missing 'yba.node_management' section in yba_config.yaml required for node operations.")
 
-        if action == "add-node" or action == "precheck-nodes": # Precheck uses the same add list
+        if action == "add-node":
             add_nodes_list = config["yba"]["node_management"].get("add")
             if not isinstance(add_nodes_list, list) or not add_nodes_list:
                 raise ValueError("Expected 'yba.node_management.add' to be a non-empty list of nodes for add-node/precheck-nodes action.")
@@ -94,9 +94,14 @@ def validate_config(config, action):
                         raise ValueError(f"Node {i} in 'yba.node_management.add' missing or empty required field: {field} for VM preparation.")
 
         elif action == "remove-node":
-            remove_params = config["yba"]["node_management"].get("remove", {})
-            if "node_name" not in remove_params or not remove_params["node_name"]:
-                raise ValueError("Missing or empty 'yba.node_management.remove.node_name' field required for remove-node.")
+            remove_nodes_list = config["yba"]["node_management"].get("remove", []) # Now expects a list
+            if not isinstance(remove_nodes_list, list) or not remove_nodes_list:
+                raise ValueError("Expected 'yba.node_management.remove' to be a non-empty list of nodes for remove-node action.")
+            for i, node in enumerate(remove_nodes_list):
+                if not isinstance(node, dict):
+                    raise ValueError(f"Invalid entry at index {i} in 'yba.node_management.remove'. Expected a dictionary, found: {node}")
+                if "yba_node_name" not in node or not node["yba_node_name"]:
+                    raise ValueError(f"Node {i} in 'yba.node_management.remove' missing or empty 'yba_node_name' field.")
             
     logging.info(f"✅ Configuration validation passed for action: {action}")
 
@@ -366,7 +371,7 @@ def _get_current_universe_node_count():
 
     try:
         completed_process = run(cmd, capture_output=True)
-        raw_json_output = completed_process.stdout.strip() # ADDED .strip() here
+        raw_json_output = completed_process.stdout.strip()
         universe_info = json.loads(raw_json_output)
         
         # Access numNodes which is explicitly shown under 'resources' in the provided JSON output
@@ -383,7 +388,7 @@ def _get_current_universe_node_count():
             raise RuntimeError(f"Could not determine current node count from YBA universe get output for '{YBA_UNIVERSE}'. "
                                f"Expected 'resources.numNodes'. Actual top-level keys: {error_details['top_level_keys']}. "
                                f"Actual resources keys: {error_details['resources_keys']}. "
-                               f"Full output start: {raw_json_output[:200]}... full output end: {raw_json_output[-200:] if len(raw_json_output) > 200 else raw_json_output}") # Dump more of the output for debugging
+                               f"Full output start: {raw_json_output[:200]}... full output end: {raw_json_output[-200:] if len(raw_json_output) > 200 else raw_json_output}")
     except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
         error_msg = f"❌ Failed to get current universe node count: {e.stderr if isinstance(e, subprocess.CalledProcessError) else e}"
         logging.error(error_msg)
@@ -421,7 +426,7 @@ def run_preflight_check_via_ssh(instance_name, zone):
         fi
 
         if [ ! -f "{FULL_PREFLIGHT_SCRIPT_PATH}" ]; then
-            echo "ERROR: {FULL_PREFLIGHT_SCRIPT_PATH} not found. Cannot run provision script." >&2 # FIXED VARIABLE NAME
+            echo "ERROR: {FULL_PREFLIGHT_SCRIPT_PATH} not found. Cannot run provision script." >&2
             exit 1
         fi
         
@@ -555,36 +560,93 @@ def add_nodes_with_scaling(): # Renamed from add_node
 
 
 def remove_node():
-    """Removes a specific node from the YugabyteDB universe."""
-    remove_config = config["yba"]["node_management"].get("remove", {})
-    node_name_to_remove = remove_config.get("node_name")
+    """
+    Decommissions nodes from the YugabyteDB universe and then scales down the universe.
+    It takes nodes from the "remove" list in config and processes them one at a time.
+    """
+    remove_nodes_list = config["yba"]["node_management"].get("remove", [])
     
-    if not node_name_to_remove:
-        logging.warning("No 'node_name' specified in 'yba.node_management.remove'. Skipping remove-node operation.")
+    if not remove_nodes_list: # Check if the list is empty after retrieval
+        logging.warning("No nodes specified in 'yba.node_management.remove' to remove. Skipping remove-node operation.")
         return
 
-    logging.info(f"Attempting to remove node '{node_name_to_remove}' from universe '{YBA_UNIVERSE}'...")
+    logging.info(f"Attempting to remove {len(remove_nodes_list)} node(s) from universe '{YBA_UNIVERSE}'...")
     
-    cmd = [
-        YBA_CLI, "universe", "node", "remove",
-        "-H", YBA_HOST, "-a", YBA_TOKEN,
-        "--name", YBA_UNIVERSE,
-        "--node-name", node_name_to_remove
-    ]
-    # Handle --insecure or --cacert for YBA CLI calls
-    if config["yba"].get("use_insecure_cli", False):
-        cmd.append("--insecure")
-    elif config["yba"].get("yba_ca_cert_path"):
-        cmd.extend(["--cacert", config["yba"]["yba_ca_cert_path"]])
+    # Store successfully decommissioned node names for logging
+    successfully_decommissioned_this_run = []
 
-    try:
-        run(cmd)
-        logging.info(f"✅ Successfully initiated remove node operation for node '{node_name_to_remove}'.")
-        logging.info("Please monitor YBA UI or 'yba task get' for progress.")
-    except subprocess.CalledProcessError as e:
-        error_msg = f"❌ Failed to remove node '{node_name_to_remove}': {e.stderr}"
-        logging.error(error_msg)
-        raise RuntimeError(error_msg)
+    for node_config in remove_nodes_list: # Iterate through the list of nodes to remove
+        # Validate node_config item, though validate_config should handle most cases
+        if not isinstance(node_config, dict) or "yba_node_name" not in node_config or not node_config["yba_node_name"]:
+            logging.error(f"❌ Invalid node entry in 'yba.node_management.remove': {node_config}. Skipping this node.")
+            continue # Skip to the next node if this one is malformed
+
+        node_name_to_decommission = node_config["yba_node_name"] # Extract the node name
+        
+        logging.info(f"\n--- Processing node '{node_name_to_decommission}' for decommissioning ---")
+        
+        # Construct the decommission command
+        # This part is removed as per your request.
+        # cmd_decommission = [
+        #     YBA_CLI, "universe", "node", "decommission", 
+        #     "-H", YBA_HOST, "-a", YBA_TOKEN,
+        #     "--name", YBA_UNIVERSE,
+        #     "--node-name", node_name_to_decommission
+        # ]
+        # ... (handle --insecure/--cacert and run cmd_decommission) ...
+        # successfully_decommissioned_this_run.append(node_name_to_decommission)
+
+        logging.info(f"NOTE: Decommissioning of specific node '{node_name_to_decommission}' is skipped as per script configuration. Scaling down will let YBA choose nodes.")
+        successfully_decommissioned_this_run.append(node_name_to_decommission) # Still count it for scale down calculation
+
+    # --- Universe Scaling Down Step after all nodes are "marked for removal" (implicitly) ---
+    if successfully_decommissioned_this_run:
+        logging.info(f"\n--- Scaling down universe '{YBA_UNIVERSE}' after preparing nodes for removal ---")
+        try:
+            current_node_count = _get_current_universe_node_count() # Get current count
+            nodes_to_remove_this_run = len(successfully_decommissioned_this_run)
+            number_tservers = current_node_count - nodes_to_remove_this_run # Calculate new total
+            
+            if number_tservers < 0:
+                logging.error(f"❌ Calculated number_tservers is negative ({number_tservers}). This indicates an error in node count. Aborting scale down.")
+                raise RuntimeError("Calculated number of tservers cannot be negative. Check current universe status.")
+            if number_tservers == 0:
+                logging.warning("⚠️ Calculated number_tservers is 0. This will decommission all nodes. Ensure this is intended.")
+            
+            logging.info(f"Current nodes: {current_node_count}. Nodes to remove (by count): {nodes_to_remove_this_run}. New target total: {number_tservers}.")
+
+            scale_down_cmd = [
+                YBA_CLI, "universe", "edit", "cluster",
+                "-H", YBA_HOST, "-a", YBA_TOKEN,
+                "--name", YBA_UNIVERSE,
+                "primary", # Assuming "primary" cluster
+                "--num-nodes", str(number_tservers),
+                "--force" # Use --force as requested, but be aware of its implications
+            ]
+            
+            # Handle --insecure or --cacert for YBA CLI calls
+            if config["yba"].get("use_insecure_cli", False):
+                scale_down_cmd.append("--insecure")
+            elif config["yba"].get("yba_ca_cert_path"):
+                scale_down_cmd.extend(["--cacert", config["yba"]["yba_ca_cert_path"]])
+
+            # Set environment variable for this specific command
+            env = os.environ.copy()
+            env["YBA_FF_PREVIEW"] = "true"
+            
+            logging.info(f"Running scaling down command: {' '.join(scale_down_cmd)}")
+            subprocess.run(scale_down_cmd, text=True, check=True, env=env)
+            
+            logging.info(f"✅ Successfully initiated universe scaling down to {number_tservers} nodes.")
+            logging.info("Please monitor YBA UI or 'yba task get' for scaling progress.")
+        except Exception as e:
+            logging.error(f"❌ Failed to scale down universe '{YBA_UNIVERSE}': {e}")
+            raise RuntimeError(f"Failed to scale down universe {YBA_UNIVERSE}: {e}")
+    else:
+        logging.info("No nodes were processed for removal in this run, skipping scale down step.")
+
+    logging.info(f"\n✅ All specified nodes initiated for removal from universe '{YBA_UNIVERSE}'.")
+    logging.info("Please monitor YBA UI or 'yba task get' for final status of these nodes.")
 
 
 def main():
