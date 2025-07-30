@@ -1,0 +1,76 @@
+YugabyteDB Universe Control Script
+This Python script provides a command-line interface (CLI) to perform various control operations on your YugabyteDB universe managed by YugabyteDB Anywhere (YBA), leveraging both gcloud CLI for VM control and yba-cli for universe management.
+
+Table of Contents
+Description
+
+Features
+
+Prerequisites
+
+Configuration (yba_config.yaml)
+
+Usage
+
+Important Notes & Troubleshooting
+
+1. Description
+This script automates common YugabyteDB universe operations, allowing you to:
+
+Pause and resume all VMs in a universe in parallel.
+
+Add new, manually pre-provisioned VMs to an existing universe and scale it up.
+
+Run preflight checks on new nodes before adding them.
+
+Decommission specific nodes from a universe and scale it down.
+
+2. Features
+Pause Universe: Stops all underlying Google Cloud VMs in parallel.
+
+Resume Universe: Starts all underlying Google Cloud VMs in parallel.
+
+Add Node(s): Prepares new, manually created VMs (runs agent provisioning script) and then scales the universe up to integrate these nodes.
+
+Remove Node(s): Decommissions specified nodes from the universe and scales the universe down.
+
+Precheck Node(s): Runs a preflight check script on target nodes to ensure readiness for YBA provisioning.
+
+Centralized configuration via yba_config.yaml.
+
+Detailed logging of operations.
+
+3. Prerequisites
+Python 3: Installed on the machine running the script.
+
+pyyaml library: Install via pip: pip install pyyaml
+
+Google Cloud CLI (gcloud):
+
+Installed and configured locally.
+
+Authenticated with appropriate permissions to manage Compute Engine instances (e.g., Compute Instance Admin (v1), Service Account User on VM's default service account).
+
+YugabyteDB Anywhere CLI (yba-cli):
+
+Installed locally and accessible via the path specified in yba_config.yaml.
+
+YBA instance reachable from where the script is run.
+
+YBA configured with the necessary Cloud Provider (GCP) credentials to manage instances in your project.
+
+SSH Connectivity:
+
+The ssh_user specified in yba_config.yaml must exist on all target VMs.
+
+This ssh_user must have sudo privileges without a password prompt.
+
+The SSH key for this ssh_user must be managed by gcloud (e.g., in ~/.ssh/google_compute_engine or via OS Login).
+
+Pre-existing VMs for add-node: For the add-node operation, the VMs (with their IPs, zones, etc.) must be manually created in GCP before running the script. These VMs should:
+
+Have the /data mount point ready.
+
+Have the YugabyteDB binaries and scripts (including node-agent-provision.sh and preflight_check.sh) present at /data/2024.2.2.2-b2/scripts/.
+
+Have the yugabyte user/group and its home directory already set up with proper permissions if using the "minimal setup" (which this script's add-node now uses).
