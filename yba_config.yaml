@@ -1,27 +1,97 @@
-project_id: "yuga-xxx"
-instance_type: "n2-standard-4"
-image_family: "rhel-8"
-image_project: "rhel-cloud"
-disk_size: 150
-new_disk_name: "new-boot-disk"
-new_image: "rhel-9-v20240415"
-disk_type: "pd-balanced"
-sh_user: "xxx"  # or whatever user you use
-ssh_wait_time: 30     # seconds to wait for SSH to be available
+# --- Top-Level Configuration ---
+# REQUIRED: Your Google Cloud Project ID
+project_id: "your-gcp-project-id"
 
+# REQUIRED: The SSH user account used for connecting to VMs via gcloud compute ssh.
+# This user must have sudo privileges on the VMs.
+ssh_user: "your_ssh_username" 
+
+# REQUIRED: Time in seconds to wait for SSH to become available on newly started VMs.
+# Adjust based on your VM boot times.
+ssh_wait_time: 30 
+
+# Optional: Configuration for boot disk rehydration (not used by this script's current actions)
+# These fields are included here for completeness if your broader automation uses them.
+new_image: "rhel-9-v20240415" 
+image_project: "rhel-cloud"
+disk_type: "pd-balanced"
+disk_size: 150 # In GB (e.g., 150 for 150GB)
+new_disk_name: "new-boot-disk" # Name prefix for new boot disks if rehydration is used
+instance_type: "n2-standard-4" # Example instance type, if used for VM creation outside YBA
+
+# --- YBA Specific Configuration ---
 yba:
-  yba_host: "https://xx.184.240.7/"
-  customer_id: "customer_id"
-  yba_api_token: "api_token"
-  universe_name: "xx"
+  # REQUIRED: The base URL of your YugabyteDB Anywhere instance (e.g., including https:// and trailing slash)
+  yba_host: "https://your-yba-ip-or-dns/" 
+  
+  # REQUIRED: Your YBA API authentication token
+  yba_api_token: "YOUR_YBA_API_TOKEN" 
+  
+  # REQUIRED: The name of the YugabyteDB universe you want to control
+  universe_name: "YourUniverseName" 
+
+  # Optional: Your YBA Customer ID (often needed but may be auto-derived by CLI)
+  customer_id: "your-customer-id" 
+
+  # REQUIRED: Full path to your yba CLI executable
+  # Make sure this path is correct for your system.
+  yba_cli_path: "/path/to/your/yba_cli-YYYY.M.M.B-linux-amd64/yba" 
+
+  # Optional: SSL/TLS configuration for YBA CLI connection
+  # Use EITHER use_insecure_cli OR yba_ca_cert_path, but NOT BOTH.
+  # If neither is provided, a publicly trusted CA cert is assumed.
+  use_insecure_cli: false # Set to true to skip SSL/TLS certificate validation (use ONLY for dev/test)
+  # yba_ca_cert_path: "/path/to/your/yba_ca_cert.pem" # Path to your YBA CA certificate file for secure connections
+
+  # REQUIRED: List of nodes in your universe for 'pause' and 'resume' actions.
+  # The script will iterate through this list to stop/start VMs directly via gcloud.
   node_list:
-    - ip: "10.128.15.xxx"
-      yba_node_name: "yb-dev-TU-n1"  # YBA node name
-      zone: "us-central1-a"
-    - ip: "10.128.0.x"
-      yba_node_name: "yb-dev-TU-n2"  # YBA node name
-      zone: "us-central1-b"
-    - ip: "10.128.0.x"
-      yba_node_name: "yb-dev-TU-n3"  # YBA node name
+    - ip: "10.128.15.214"
+      yba_node_name: "yb-dev-TU-n2" # YBA node name
       zone: "us-central1-c"
-  yba_cli_path: "/opt/yugabyte/software/active/yb-platform/yugaware/yba-cli/yba_cli-2024.2.2.2-b2-linux-amd64/yba"
+    - ip: "10.128.0.28"
+      yba_node_name: "yb-dev-TU-n1" # YBA node name
+      zone: "us-central1-a"
+    # Add all other nodes in your universe here for pause/resume to work correctly.
+
+  # REQUIRED: Configuration for 'add-node' and 'remove-node' actions.
+  node_management:
+    # --- Configuration for 'add-node' action ---
+    # This is a LIST of VMs you have *manually* created and prepared,
+    # that you want to add to the YBA universe.
+    add:
+      - ip: "10.128.15.234" # REQUIRED: IP of the manually created VM
+        yba_node_name: "yb-dev-TU-n4" # REQUIRED: Name YBA will use for this node
+        zone: "us-central1-a" # REQUIRED: Zone where the VM exists
+        ssh_user: "your_ssh_username" # REQUIRED: User YBA will connect as to this *existing* VM
+
+        # These details are used by YBA for its internal management/configuration of the added node.
+        cloud_provider_code: "GCP" # REQUIRED: Your Cloud Provider Code in YBA (e.g., GCP, AWS, AZURE)
+        instance_type: "n1-standard-4" # REQUIRED: VM machine type (YBA records this)
+        volume_type: "pd-ssd" # REQUIRED: Disk type for data volume (YBA records this)
+        volume_size: "100GB" # REQUIRED: Size of data volume (YBA records this, e.g., 100GB)
+        assign_public_ip: false # REQUIRED: true or false
+
+        # Optional network parameters for YBA to record (uncomment and fill if needed)
+        # vpc_id: "your-vpc-network"
+        # subnet_id: "projects/your-project/regions/us-central1/subnetworks/your-subnet"
+        # security_group_ids: ["your-security-group-name-1", "your-security-group-name-2"] # List of security group names
+      
+      # You can add more nodes to this list if you want to add them in one 'add-node' operation:
+      # - ip: "10.128.15.235"
+      #   yba_node_name: "yb-dev-TU-n5"
+      #   zone: "us-central1-a"
+      #   ssh_user: "your_ssh_username"
+      #   cloud_provider_code: "GCP"
+      #   instance_type: "n1-standard-4"
+      #   volume_type: "pd-ssd"
+      #   volume_size: "100GB"
+      #   assign_public_ip: false
+
+    # --- Configuration for 'remove-node' action ---
+    # This is a LIST of specific nodes you want to decommission.
+    # The script will then calculate the new universe size and scale down the universe.
+    remove: 
+      - yba_node_name: "yb-dev-TU-n4" # REQUIRED: The YBA node name to decommission (example)
+      # You can add more nodes to this list if you want to decommission multiple in one go:
+      # - yba_node_name: "yb-dev-TU-n5"
