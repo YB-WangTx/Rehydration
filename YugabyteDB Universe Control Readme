@@ -1,4 +1,4 @@
-YugabyteDB Universe Control Script
+# YugabyteDB Universe Control Script
 This Python script provides a command-line interface (CLI) to perform various control operations on your YugabyteDB universe managed by YugabyteDB Anywhere (YBA), leveraging both gcloud CLI for VM control and yba-cli for universe management.
 
 Table of Contents
